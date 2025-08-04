@@ -5,7 +5,9 @@ const cors = require('cors');
 const router = express.Router();
 
 const sequelize = require('./src/sequelize');
+
 const userRouter = require("./src/routes/user");
+const loginRouter = require("./src/routes/login");
 
 const server = express();
 
@@ -26,5 +28,7 @@ server.listen(PORT, () => {
 });
 
 server.use('/user', userRouter);
+
+server.use('/login', loginRouter);
 
 module.exports = router;
