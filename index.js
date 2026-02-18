@@ -28,7 +28,7 @@ server.use((err, req, res, _next) => {
 
 const PORT = process.env.PORT || 3000;
 
-sequelize.sync({ alter: true })
+sequelize.sync()
     .then(() => {
         console.log('DB is ready');
         server.listen(PORT, () => {

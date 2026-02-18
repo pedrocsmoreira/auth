@@ -525,7 +525,7 @@ paths:
       tags: [Users]
       summary: Create a user (invite flow)
       description: >
-        Creates a new user account. **Admin only.**
+        Creates a new user account. **Admin role + master API key required.**
 
 
         The admin **never sets or sees the user's password**. Instead, the server
@@ -535,9 +535,14 @@ paths:
 
 
         `force_password_change` is always set to `true` on creation.
+
+
+        This endpoint is intentionally unavailable to applications using the
+        `LOGIN_API_KEY` — only the designated user-management application
+        (holding the `MASTER_API_KEY`) may provision accounts.
       operationId: createUser
       security:
-        - ApiKeyAuth: []
+        - ApiKeyAuth: [MasterKey]
         - BearerAuth: []
       requestBody:
         required: true
@@ -702,10 +707,16 @@ paths:
     delete:
       tags: [Users]
       summary: Delete a user
-      description: Permanently deletes a user and all associated refresh tokens. **Admin only.**
+      description: >
+        Permanently deletes a user and all associated refresh tokens.
+        **Admin role + master API key required.**
+
+
+        Like user creation, this operation is restricted to the application
+        holding the `MASTER_API_KEY` and is unavailable to `LOGIN_API_KEY` clients.
       operationId: deleteUser
       security:
-        - ApiKeyAuth: []
+        - ApiKeyAuth: [MasterKey]
         - BearerAuth: []
       responses:
         '200':
