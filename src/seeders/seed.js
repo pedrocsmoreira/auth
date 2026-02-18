@@ -7,9 +7,8 @@ const ADMIN_USERNAME = process.env.SEED_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
 
 async function seed() {
-    // sync() — creates any missing tables but never alters existing ones.
-    // Schema changes are the server's responsibility (sync({ alter: true }) in index.js).
-    await sequelize.sync();
+    // alter: true so new columns (e.g. deactivated_at) are added when seeding a fresh DB.
+    await sequelize.sync({ alter: true });
 
     // Idempotently create roles
     const [adminRole] = await Role.findOrCreate({ where: { name: 'admin' } });
