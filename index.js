@@ -1,34 +1,41 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-
-const router = express.Router();
-
-const sequelize = require('./src/sequelize');
-
-const userRouter = require("./src/routes/user");
-const loginRouter = require("./src/routes/login");
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import { sequelize } from './src/models/index.js';
+import userRouter from './src/routes/user.js';
+import loginRouter from './src/routes/login.js';
+import validateApiKey from './src/middleware/validateApiKey.js';
+import { respondError } from './src/utils/response.js';
 
 const server = express();
 
 server.use(cors());
-server.use(bodyParser.urlencoded({ extended: true }));
-server.use(bodyParser.json());
+server.use(morgan('dev'));
+server.use(express.json());
+server.use(express.urlencoded({ extended: true }));
 
-sequelize.sync({ force: true }).then(() => {
-    console.log('db is ready');
+server.use(validateApiKey);
+
+server.use('/user', userRouter);
+server.use('/login', loginRouter);
+
+// Global error handler
+server.use((err, req, res, _next) => {
+    console.error(err);
+    return respondError(res, err.message || 'Internal server error', 500);
 });
-
-require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => {
-    console.log("AUTH API IS ON in PORT " + PORT);
-});
-
-server.use('/user', userRouter);
-
-server.use('/login', loginRouter);
-
-module.exports = router;
+sequelize.sync({ alter: true })
+    .then(() => {
+        console.log('DB is ready');
+        server.listen(PORT, () => {
+            console.log(`AUTH API running on port ${PORT}`);
+        });
+    })
+    .catch(err => {
+        console.error('Failed to sync DB:', err);
+        process.exit(1);
+    });
