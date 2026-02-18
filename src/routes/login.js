@@ -4,7 +4,10 @@ import crypto from 'crypto';
 import { User, Role, RefreshToken } from '../models/index.js';
 import { hashPassword, comparePassword } from '../middleware/hash.js';
 import jwtAuth from '../middleware/jwtAuth.js';
+import { loginLimiter } from '../middleware/rateLimiter.js';
+import { validate, loginSchema, changePasswordSchema, resetPasswordSchema, forgotPasswordSchema } from '../middleware/validate.js';
 import { respond, respondError } from '../utils/response.js';
+import { audit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
@@ -21,7 +24,7 @@ function generateAccessToken(user) {
     );
 }
 
-async function generateRefreshToken(userId) {
+async function issueRefreshToken(userId) {
     const token = crypto.randomBytes(64).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
     await RefreshToken.create({ token, userId, expiresAt });
@@ -29,13 +32,9 @@ async function generateRefreshToken(userId) {
 }
 
 // POST /login — Authenticate with username + password
-router.post('/', async (req, res) => {
+router.post('/', loginLimiter, validate(loginSchema), async (req, res) => {
     try {
         const { username, password } = req.body;
-
-        if (!username || !password) {
-            return respondError(res, 'Username and password are required');
-        }
 
         const user = await User.scope('withPassword').findOne({
             where: { username },
@@ -43,24 +42,27 @@ router.post('/', async (req, res) => {
         });
 
         if (!user) {
+            audit('login.failure', { username, reason: 'user_not_found', ip: req.ip });
             return respondError(res, 'Invalid credentials', 401);
         }
 
         const valid = await comparePassword(password, user.password);
         if (!valid) {
+            audit('login.failure', { username, userId: user.id, reason: 'wrong_password', ip: req.ip });
             return respondError(res, 'Invalid credentials', 401);
         }
 
         const accessToken = generateAccessToken(user);
-        const refreshToken = await generateRefreshToken(user.id);
+        const refreshToken = await issueRefreshToken(user.id);
 
+        audit('login.success', { userId: user.id, username: user.username, ip: req.ip });
         return respond(res, { accessToken, refreshToken });
     } catch (err) {
         return respondError(res, err.message, 500);
     }
 });
 
-// POST /login/refresh — Exchange a refresh token for a new access token
+// POST /login/refresh — Exchange a refresh token for a new access token (token rotation)
 router.post('/refresh', async (req, res) => {
     try {
         const { refreshToken } = req.body;
@@ -86,8 +88,13 @@ router.post('/refresh', async (req, res) => {
             return respondError(res, 'User not found', 404);
         }
 
+        // Rotate: revoke the consumed token and issue a fresh one
+        await stored.update({ revoked: true });
+        const newRefreshToken = await issueRefreshToken(user.id);
+
         const accessToken = generateAccessToken(user);
-        return respond(res, { accessToken });
+        audit('token.refreshed', { userId: user.id, ip: req.ip });
+        return respond(res, { accessToken, refreshToken: newRefreshToken });
     } catch (err) {
         return respondError(res, err.message, 500);
     }
@@ -105,20 +112,32 @@ router.post('/logout', jwtAuth, async (req, res) => {
             );
         }
 
+        audit('logout', { userId: req.user.userId, ip: req.ip });
         return respond(res, { message: 'Logged out successfully' });
     } catch (err) {
         return respondError(res, err.message, 500);
     }
 });
 
+// POST /login/logout-all — Revoke every active session for the authenticated user
+router.post('/logout-all', jwtAuth, async (req, res) => {
+    try {
+        const count = await RefreshToken.update(
+            { revoked: true },
+            { where: { userId: req.user.userId, revoked: false } }
+        );
+
+        audit('logout.all', { userId: req.user.userId, tokensRevoked: count[0], ip: req.ip });
+        return respond(res, { message: `All sessions terminated (${count[0]} token(s) revoked)` });
+    } catch (err) {
+        return respondError(res, err.message, 500);
+    }
+});
+
 // POST /login/change-password — Change password while authenticated
-router.post('/change-password', jwtAuth, async (req, res) => {
+router.post('/change-password', jwtAuth, validate(changePasswordSchema), async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
-
-        if (!currentPassword || !newPassword) {
-            return respondError(res, 'currentPassword and newPassword are required');
-        }
 
         const user = await User.scope('withPassword').findByPk(req.user.userId);
         if (!user) {
@@ -127,6 +146,7 @@ router.post('/change-password', jwtAuth, async (req, res) => {
 
         const valid = await comparePassword(currentPassword, user.password);
         if (!valid) {
+            audit('password.change.failure', { userId: req.user.userId, reason: 'wrong_current_password', ip: req.ip });
             return respondError(res, 'Current password is incorrect', 401);
         }
 
@@ -135,6 +155,7 @@ router.post('/change-password', jwtAuth, async (req, res) => {
         user.force_password_change = false;
         await user.save();
 
+        audit('password.changed', { userId: req.user.userId, ip: req.ip });
         return respond(res, { message: 'Password updated successfully' });
     } catch (err) {
         return respondError(res, err.message, 500);
@@ -142,13 +163,9 @@ router.post('/change-password', jwtAuth, async (req, res) => {
 });
 
 // POST /login/forgot-password — Request a password reset token
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
     try {
         const { username } = req.body;
-
-        if (!username) {
-            return respondError(res, 'Username is required');
-        }
 
         const user = await User.scope('withResetToken').findOne({ where: { username } });
 
@@ -165,6 +182,7 @@ router.post('/forgot-password', async (req, res) => {
         await user.save();
 
         // In production: send resetToken via email. For now, log it for dev use.
+        audit('password.reset.requested', { userId: user.id, ip: req.ip });
         console.log(`[PASSWORD RESET] Token for "${username}": ${resetToken}`);
 
         return respond(res, { message: genericMsg });
@@ -174,13 +192,9 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // POST /login/reset-password — Reset password using a reset token
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
     try {
         const { token, newPassword } = req.body;
-
-        if (!token || !newPassword) {
-            return respondError(res, 'token and newPassword are required');
-        }
 
         const user = await User.scope('withResetToken').findOne({
             where: { reset_token: token }
@@ -197,6 +211,7 @@ router.post('/reset-password', async (req, res) => {
         user.password_change = true;
         await user.save();
 
+        audit('password.reset.completed', { userId: user.id, ip: req.ip });
         return respond(res, { message: 'Password has been reset successfully' });
     } catch (err) {
         return respondError(res, err.message, 500);
