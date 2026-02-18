@@ -523,8 +523,18 @@ paths:
 
     post:
       tags: [Users]
-      summary: Create a user
-      description: Creates a new user account. **Admin only.**
+      summary: Create a user (invite flow)
+      description: >
+        Creates a new user account. **Admin only.**
+
+
+        The admin **never sets or sees the user's password**. Instead, the server
+        generates an opaque `inviteToken` (valid 48 h) which the admin passes to
+        the new user. The new user calls `POST /login/reset-password` with that
+        token to choose their own password and activate their account.
+
+
+        `force_password_change` is always set to `true` on creation.
       operationId: createUser
       security:
         - ApiKeyAuth: []
@@ -535,27 +545,21 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password]
+              required: [username]
               properties:
                 username:
                   type: string
                   example: newuser
-                password:
-                  type: string
-                  format: password
-                  example: initialP@ss!
                 roleId:
                   type: integer
                   nullable: true
                   description: ID of the role to assign. Omit for no role.
                   example: 1
-                force_password_change:
-                  type: boolean
-                  default: false
-                  description: When true, the user must change their password on first login.
       responses:
         '201':
-          description: User created (password excluded from response).
+          description: >
+            User created. The `inviteToken` must be passed to the new user so they
+            can set their password via `POST /login/reset-password`.
           content:
             application/json:
               schema:
@@ -564,7 +568,15 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/User'
+                        allOf:
+                          - $ref: '#/components/schemas/User'
+                          - type: object
+                            required: [inviteToken]
+                            properties:
+                              inviteToken:
+                                type: string
+                                description: One-time token (48 h TTL). Pass to the new user to activate their account.
+                                example: 9f86d081884c7d659a2feaa0c55ad015...
         '400':
           description: Missing required fields.
           content:

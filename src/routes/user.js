@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import { User } from '../models/index.js';
 import { hashPassword } from '../middleware/hash.js';
 import jwtAuth from '../middleware/jwtAuth.js';
@@ -32,24 +33,35 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /user/ — Create a new user (admin only)
+// The admin never sets or sees the password. An invite token is returned instead;
+// the new user calls POST /login/reset-password to activate their account.
 router.post('/', authorize('admin'), async (req, res) => {
     try {
-        const { username, password, roleId, force_password_change } = req.body;
+        const { username, roleId } = req.body;
 
-        if (!username || !password) {
-            return respondError(res, 'username and password are required');
+        if (!username) {
+            return respondError(res, 'username is required');
         }
 
-        const hashedPassword = await hashPassword(password);
+        // Generate an internal temp password — never exposed to the caller
+        const tempPassword = crypto.randomBytes(32).toString('hex');
+        const hashedPassword = await hashPassword(tempPassword);
+
+        // Invite token gives the user 48 h to set their own password
+        const inviteToken = crypto.randomBytes(32).toString('hex');
+        const inviteExpires = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
         const created = await User.create({
             username,
             password: hashedPassword,
             roleId: roleId || null,
-            force_password_change: force_password_change || false
+            force_password_change: true,
+            reset_token: inviteToken,
+            reset_token_expires: inviteExpires
         });
 
         const safeUser = await User.scope('safe').findByPk(created.id);
-        return respond(res, safeUser, 201);
+        return respond(res, { ...safeUser.toJSON(), inviteToken }, 201);
     } catch (err) {
         if (err.name === 'SequelizeUniqueConstraintError') {
             return respondError(res, 'Username already exists', 409);
