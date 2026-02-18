@@ -7,11 +7,12 @@ info:
 
     ## Authentication flow
 
-    1. All requests must include a valid `x-api-key` header.
-    2. Call `POST /login` to receive an **access token** (15 min) and a **refresh token** (7 days).
-    3. Pass the access token as `Authorization: Bearer <token>` on all protected endpoints.
-    4. When the access token expires, call `POST /login/refresh` with the refresh token to obtain a new one.
-    5. Call `POST /login/logout` to revoke the refresh token and end the session.
+    1. Call `GET /health` to verify the API is up (no key required).
+    2. All other requests must include a valid `x-api-key` header.
+    3. Call `POST /login` to receive an **access token** (15 min) and a **refresh token** (7 days).
+    4. Pass the access token as `Authorization: Bearer <token>` on all protected endpoints.
+    5. When the access token expires, call `POST /login/refresh` with the refresh token — a **new refresh token is also returned** (rolling rotation).
+    6. Call `POST /login/logout` to revoke the current refresh token, or `POST /login/logout-all` to revoke all sessions at once.
 
     ## Roles
 
@@ -94,6 +95,12 @@ components:
         createdAt:
           type: string
           format: date-time
+        deactivated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when an admin deactivates the account. Null means active.
+          example: null
         updatedAt:
           type: string
           format: date-time
@@ -161,6 +168,16 @@ components:
             success: false
             error: User not found
 
+    TooManyRequests:
+      description: Rate limit exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: Too many requests, please try again later
+
     InvalidApiKey:
       description: Missing or invalid API key.
       content:
@@ -185,6 +202,39 @@ security:
 # ─── Paths ───────────────────────────────────────────────────────────────────
 
 paths:
+
+  # ── /health ───────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns the current API status and uptime. No API key or auth token required.
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: API is running.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            example: ok
+                          uptime:
+                            type: number
+                            description: Process uptime in seconds.
+                            example: 42.5
+                          timestamp:
+                            type: string
+                            format: date-time
 
   # ── /login ────────────────────────────────────────────────────────────────
 
@@ -243,15 +293,17 @@ paths:
                 error: Invalid credentials
         '403':
           $ref: '#/components/responses/InvalidApiKey'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 
   /login/refresh:
     post:
       tags: [Authentication]
-      summary: Refresh access token
+      summary: Refresh access token (with rotation)
       description: >
-        Exchange a valid, non-revoked refresh token for a new access token.
-        The refresh token itself is not rotated; revoke it explicitly via
-        `POST /login/logout`.
+        Exchange a valid, non-revoked refresh token for a **new access token and
+        a new refresh token** (rolling rotation). The old refresh token is
+        immediately revoked — store only the new one.
       operationId: refreshToken
       requestBody:
         required: true
@@ -266,7 +318,7 @@ paths:
                   example: a3f1c2d4e5b6...
       responses:
         '200':
-          description: New access token issued.
+          description: New token pair issued. The old refresh token is now revoked.
           content:
             application/json:
               schema:
@@ -275,7 +327,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/AccessToken'
+                        $ref: '#/components/schemas/TokenPair'
         '400':
           description: Refresh token not provided.
           content:
@@ -291,6 +343,39 @@ paths:
               example:
                 success: false
                 error: Invalid or expired refresh token
+        '403':
+          $ref: '#/components/responses/InvalidApiKey'
+
+  /login/logout-all:
+    post:
+      tags: [Authentication]
+      summary: Revoke all sessions
+      description: >
+        Revokes **all** refresh tokens belonging to the authenticated user,
+        effectively logging them out from every device/client simultaneously.
+        Access tokens already issued will continue to work until they expire (max 15 min).
+      operationId: logoutAll
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+              example:
+                success: true
+                data:
+                  message: All sessions have been revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/InvalidApiKey'
 
@@ -497,14 +582,32 @@ paths:
     get:
       tags: [Users]
       summary: List all users
-      description: Returns all users. **Admin only.**
+      description: Returns a paginated list of all users. **Admin only.**
       operationId: listUsers
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-based). Defaults to 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          description: Number of users per page. Defaults to 20, max 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            example: 20
       responses:
         '200':
-          description: Array of users (passwords excluded).
+          description: Paginated list of users (passwords excluded).
           content:
             application/json:
               schema:
@@ -513,9 +616,26 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/User'
+                        type: object
+                        properties:
+                          users:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+                          total:
+                            type: integer
+                            description: Total number of users across all pages.
+                            example: 42
+                          page:
+                            type: integer
+                            example: 1
+                          limit:
+                            type: integer
+                            example: 20
+                          pages:
+                            type: integer
+                            description: Total number of pages.
+                            example: 3
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -741,7 +861,97 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /user/{id}/deactivate:
+    post:
+      tags: [Users]
+      summary: Deactivate a user
+      description: >
+        Sets `deactivated_at` on the user record, preventing them from logging in
+        or using any authenticated endpoint. **Admin role + master API key required.**
+
+
+        The user's existing sessions (refresh tokens) are not automatically
+        revoked — their access tokens will stop working at next check.
+      operationId: deactivateUser
+      security:
+        - ApiKeyAuth: [MasterKey]
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric user ID.
+          schema:
+            type: integer
+            example: 2
+      responses:
+        '200':
+          description: User deactivated.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+              example:
+                success: true
+                data:
+                  message: User deactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /user/{id}/reactivate:
+    post:
+      tags: [Users]
+      summary: Reactivate a user
+      description: >
+        Clears `deactivated_at`, allowing the user to log in and use the API again.
+        **Admin role + master API key required.**
+      operationId: reactivateUser
+      security:
+        - ApiKeyAuth: [MasterKey]
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric user ID.
+          schema:
+            type: integer
+            example: 2
+      responses:
+        '200':
+          description: User reactivated.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+              example:
+                success: true
+                data:
+                  message: User reactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 tags:
+  - name: Health
+    description: Liveness probe — no authentication required.
   - name: Authentication
     description: >
       Login, logout, token refresh, and password management.
