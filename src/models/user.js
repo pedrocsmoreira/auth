@@ -26,6 +26,10 @@ User.init({
         type: DataTypes.BOOLEAN,
         defaultValue: false
     },
+    deactivated_at: {
+        type: DataTypes.DATE,
+        allowNull: true
+    },
     reset_token: {
         type: DataTypes.STRING,
         allowNull: true
@@ -38,11 +42,15 @@ User.init({
     sequelize,
     modelName: 'user',
     scopes: {
-        // Use this scope for queries that need to verify passwords
-        withPassword: {},
-        // Use this scope for password-reset flows (also exposes reset token fields)
-        withResetToken: {},
-        // Default safe view — exclude sensitive fields
+        // Explicitly include password for auth checks
+        withPassword: {
+            attributes: { include: ['password'] }
+        },
+        // Explicitly include reset token fields for password-reset flows
+        withResetToken: {
+            attributes: { include: ['reset_token', 'reset_token_expires'] }
+        },
+        // Default safe view — exclude all sensitive fields
         safe: {
             attributes: { exclude: ['password', 'reset_token', 'reset_token_expires'] }
         }
