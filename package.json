@@ -7,7 +7,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index",
-    "seed": "node src/seeders/seed.js"
+    "seed": "node src/seeders/seed.js",
+    "migrate": "sequelize db:migrate",
+    "migrate:undo": "sequelize db:migrate:undo",
+    "cleanup": "node -e \"import('./src/jobs/cleanupTokens.js').then(m => m.cleanupExpiredTokens()).then(() => process.exit(0))\""
   },
   "keywords": [],
   "author": "",
@@ -17,10 +20,14 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
     "sequelize": "^6.37.7",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
