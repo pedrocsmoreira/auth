@@ -1,24 +1,22 @@
-require('dotenv').config();
+export default function validateApiKey(req, res, next) {
+    const LOGIN_API_KEY = process.env.LOGIN_API_KEY;
+    const MASTER_API_KEY = process.env.MASTER_API_KEY;
 
-const LOGIN_API_KEY = process.env.LOGIN_API_KEY;
-const MASTER_API_KEY = process.env.MASTER_API_KEY;
+    const apiKey = req.headers['x-api-key'];
 
-export default async (req, res, next) => {
-    let apiKey = req.headers['X-API-KEY'] || req.headers['x-api-key'];
-
-    if(!apiKey) {
-        res.status(403);
-        return res.send({ error: 'API KEY NOT PROVIDED'});
+    if (!apiKey) {
+        return res.status(403).json({ success: false, error: 'API key not provided' });
     }
 
-    if(apiKey === LOGIN_API_KEY) {
-        //validate host
+    if (apiKey === MASTER_API_KEY) {
+        req.apiKeyRole = 'master';
+        return next();
     }
 
-    if(apiKey === MASTER_API_KEY) {
-        //validate host
+    if (apiKey === LOGIN_API_KEY) {
+        req.apiKeyRole = 'login';
+        return next();
     }
 
-    res.status(403);
-    return res.send({ error: 'API KEY HAS NO MATCH'});
-};
+    return res.status(403).json({ success: false, error: 'Invalid API key' });
+}

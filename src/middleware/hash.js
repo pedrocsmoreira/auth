@@ -1,6 +1,11 @@
-const crypto = require('crypto');
+import bcrypt from 'bcrypt';
 
-export default async (data) => {
-    const hash = crypto.createHash('sha512').update(data).digest('hex');;
-    return hash;    
-};
+const SALT_ROUNDS = 12;
+
+export async function hashPassword(plain) {
+    return bcrypt.hash(plain, SALT_ROUNDS);
+}
+
+export async function comparePassword(plain, hashed) {
+    return bcrypt.compare(plain, hashed);
+}
