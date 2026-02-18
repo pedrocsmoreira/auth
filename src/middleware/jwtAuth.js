@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
+import { User } from '../models/index.js';
 import { respondError } from '../utils/response.js';
 
-export default function jwtAuth(req, res, next) {
+export default async function jwtAuth(req, res, next) {
     const authHeader = req.headers['authorization'];
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -12,6 +13,20 @@ export default function jwtAuth(req, res, next) {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        // Check deactivation on every request — catches accounts deactivated after token issuance
+        const user = await User.findByPk(decoded.userId, {
+            attributes: ['id', 'deactivated_at']
+        });
+
+        if (!user) {
+            return respondError(res, 'User no longer exists', 401);
+        }
+
+        if (user.deactivated_at) {
+            return respondError(res, 'Account is deactivated', 403);
+        }
+
         req.user = decoded; // { userId, username, role, force_password_change }
 
         // If a password change is required, only allow the change-password endpoint
@@ -24,3 +39,4 @@ export default function jwtAuth(req, res, next) {
         return respondError(res, 'Invalid or expired token', 401);
     }
 }
+
