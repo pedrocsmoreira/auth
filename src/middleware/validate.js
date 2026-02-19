@@ -58,3 +58,7 @@ export const updateUserSchema = z.object({
 }).refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided'
 });
+
+export const createRoleSchema = z.object({
+    name: z.string().trim().min(1).max(64)
+});
