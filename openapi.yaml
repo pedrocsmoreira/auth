@@ -134,6 +134,22 @@ components:
           type: string
           example: Operation completed successfully.
 
+    Role:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: admin
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
   # ─── Reusable responses ────────────────────────────────────────────────────
 
   responses:
@@ -949,6 +965,152 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  # ── /roles ────────────────────────────────────────────────────────────────
+
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      description: >
+        Returns all roles. Accessible with either the login API key or the master API key.
+      operationId: listRoles
+      responses:
+        '200':
+          description: List of roles.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Role'
+        '403':
+          $ref: '#/components/responses/InvalidApiKey'
+
+    post:
+      tags: [Roles]
+      summary: Create a role
+      description: >
+        Creates a new role. **Master API key required.**
+      operationId: createRole
+      security:
+        - ApiKeyAuth: [MasterKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  example: editor
+      responses:
+        '201':
+          description: Role created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Role'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Role already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: Role already exists
+
+  /roles/{id}:
+    get:
+      tags: [Roles]
+      summary: Get a role
+      description: >
+        Returns a single role by ID. Accessible with either the login API key or the master API key.
+      operationId: getRole
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric role ID.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Role found.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Role'
+        '403':
+          $ref: '#/components/responses/InvalidApiKey'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Roles]
+      summary: Delete a role
+      description: >
+        Deletes a role by ID. **Master API key required.**
+      operationId: deleteRole
+      security:
+        - ApiKeyAuth: [MasterKey]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric role ID.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Role deleted.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+              example:
+                success: true
+                data:
+                  message: Role deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 tags:
   - name: Health
     description: Liveness probe — no authentication required.
@@ -961,3 +1123,7 @@ tags:
     description: >
       User CRUD operations. All endpoints require both a valid API key
       **and** a Bearer token.
+  - name: Roles
+    description: >
+      Role management. GET endpoints require any valid API key (login or master).
+      POST and DELETE require the master API key.

@@ -6,6 +6,7 @@ import { sequelize } from './src/models/index.js';
 import userRouter from './src/routes/user.js';
 import loginRouter from './src/routes/login.js';
 import healthRouter from './src/routes/health.js';
+import rolesRouter from './src/routes/roles.js';
 import validateApiKey from './src/middleware/validateApiKey.js';
 import { respondError } from './src/utils/response.js';
 import logger from './src/utils/logger.js';
@@ -37,6 +38,7 @@ server.use(validateApiKey);
 
 server.use('/user', userRouter);
 server.use('/login', loginRouter);
+server.use('/roles', rolesRouter);
 
 // Global error handler
 server.use((err, req, res, _next) => {
